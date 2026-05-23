@@ -6,9 +6,8 @@ import io
 import os
 import tempfile
 
-# Probeer reportlab te importeren voor de exacte PDF-matrix export
+# ReportLab importeren voor zuivere PDF generatie
 try:
-    from reportlab.lib.pagesizes import A0, A1, A2, A3, A4, A5
     from reportlab.pdfgen import canvas
     from reportlab.lib.utils import ImageReader
     PDF_SUPPORT = True
@@ -40,93 +39,82 @@ FORMATS = {
     "A0": (841, 1189)
 }
 
-PDF_SIZES = {"A5": A5, "A4": A4, "A3": A3, "A2": A2, "A1": A1, "A0": A0}
-
-def rgb_to_cmyk(r, g, b):
-    if r == 0 and g == 0 and b == 0:
-        return (0, 0, 0, 100)
-    r_prime, g_prime, b_prime = r / 255.0, g / 255.0, b / 255.0
-    k = 1 - max(r_prime, g_prime, b_prime)
-    if k < 1:
-        c = (1 - r_prime - k) / (1 - k)
-        m = (1 - g_prime - k) / (1 - k)
-        y = (1 - b_prime - k) / (1 - k)
-    else:
-        c, m, y = 0, 0, 0
-    return (c * 100, m * 100, y * 100, k * 100)
-
 def get_dominant_color(image):
     small_img = image.resize((100, 100))
-    small_img = small_img.quantize(colors=64)
-    small_img = small_img.convert('RGB')
+    small_img = small_img.quantize(colors=64).convert('RGB')
     pixels = list(small_img.getdata())
     return Counter(pixels).most_common(1)[0][0]
 
 def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
-    """De exacte afloop-algoritmes uit de computerversie (CA_App_Bleed&CMYK.py)"""
+    """Genereert afloop zónder anti-aliasing lijnen door 2 pixels overlap toe te passen"""
     width, height = original_img.size
     new_width = width + (bleed_pixels * 2)
     new_height = height + (bleed_pixels * 2)
     
+    # Maak de basisafbeelding aan voor de afloop
     if method == "Wit / Geselecteerde Kleur":
         color = custom_color if custom_color else (255, 255, 255)
-        new_img = Image.new('RGB', (new_width, new_height), color)
-        new_img.paste(original_img, (bleed_pixels, bleed_pixels))
+        bleed_bg = Image.new('RGB', (new_width, new_height), color)
         
     elif method == "Spiegelen (Mirror)":
-        new_img = Image.new('RGB', (new_width, new_height))
-        new_img.paste(original_img, (bleed_pixels, bleed_pixels))
+        bleed_bg = Image.new('RGB', (new_width, new_height))
         
+        # Spiegelen van de randen op basis van de originele pixels
         top_mirror = original_img.crop((0, 0, width, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM)
-        new_img.paste(top_mirror, (bleed_pixels, 0))
+        bleed_bg.paste(top_mirror, (bleed_pixels, 0))
         
         bottom_mirror = original_img.crop((0, height - bleed_pixels, width, height)).transpose(Image.FLIP_TOP_BOTTOM)
-        new_img.paste(bottom_mirror, (bleed_pixels, new_height - bleed_pixels))
+        bleed_bg.paste(bottom_mirror, (bleed_pixels, new_height - bleed_pixels))
         
         left_mirror = original_img.crop((0, 0, bleed_pixels, height)).transpose(Image.FLIP_LEFT_RIGHT)
-        new_img.paste(left_mirror, (0, bleed_pixels))
+        bleed_bg.paste(left_mirror, (0, bleed_pixels))
         
         right_mirror = original_img.crop((width - bleed_pixels, 0, width, height)).transpose(Image.FLIP_LEFT_RIGHT)
-        new_img.paste(right_mirror, (new_width - bleed_pixels, bleed_pixels))
+        bleed_bg.paste(right_mirror, (new_width - bleed_pixels, bleed_pixels))
         
+        # Hoeken spiegelen
         top_left = original_img.crop((0, 0, bleed_pixels, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        new_img.paste(top_left, (0, 0))
+        bleed_bg.paste(top_left, (0, 0))
         top_right = original_img.crop((width - bleed_pixels, 0, width, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        new_img.paste(top_right, (new_width - bleed_pixels, 0))
+        bleed_bg.paste(top_right, (new_width - bleed_pixels, 0))
         bottom_left = original_img.crop((0, height - bleed_pixels, bleed_pixels, height)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        new_img.paste(bottom_left, (0, new_height - bleed_pixels))
+        bleed_bg.paste(bottom_left, (0, new_height - bleed_pixels))
         bottom_right = original_img.crop((width - bleed_pixels, height - bleed_pixels, width, height)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        new_img.paste(bottom_right, (new_width - bleed_pixels, new_height - bleed_pixels))
+        bleed_bg.paste(bottom_right, (new_width - bleed_pixels, new_height - bleed_pixels))
         
     elif method == "Randpixels Uitrekken (Stretch)":
-        new_img = Image.new('RGB', (new_width, new_height))
-        new_img.paste(original_img, (bleed_pixels, bleed_pixels))
+        bleed_bg = Image.new('RGB', (new_width, new_height))
         
         top_stretched = original_img.crop((0, 0, width, 1)).resize((width, bleed_pixels), Image.Resampling.NEAREST)
-        new_img.paste(top_stretched, (bleed_pixels, 0))
+        bleed_bg.paste(top_stretched, (bleed_pixels, 0))
         bottom_stretched = original_img.crop((0, height-1, width, height)).resize((width, bleed_pixels), Image.Resampling.NEAREST)
-        new_img.paste(bottom_stretched, (bleed_pixels, new_height - bleed_pixels))
+        bleed_bg.paste(bottom_stretched, (bleed_pixels, new_height - bleed_pixels))
         left_stretched = original_img.crop((0, 0, 1, height)).resize((bleed_pixels, height), Image.Resampling.NEAREST)
-        new_img.paste(left_stretched, (0, bleed_pixels))
+        bleed_bg.paste(left_stretched, (0, bleed_pixels))
         right_stretched = original_img.crop((width-1, 0, width, height)).resize((bleed_pixels, height), Image.Resampling.NEAREST)
-        new_img.paste(right_stretched, (new_width - bleed_pixels, bleed_pixels))
+        bleed_bg.paste(right_stretched, (new_width - bleed_pixels, bleed_pixels))
         
         top_left_color = original_img.getpixel((0, 0))
         corner = Image.new('RGB', (bleed_pixels, bleed_pixels), top_left_color)
-        new_img.paste(corner, (0, 0))
-        new_img.paste(corner, (new_width - bleed_pixels, 0))
-        new_img.paste(corner, (0, new_height - bleed_pixels))
-        new_img.paste(corner, (new_width - bleed_pixels, new_height - bleed_pixels))
+        bleed_bg.paste(corner, (0, 0))
+        bleed_bg.paste(corner, (new_width - bleed_pixels, 0))
+        bleed_bg.paste(corner, (0, new_height - bleed_pixels))
+        bleed_bg.paste(corner, (new_width - bleed_pixels, new_height - bleed_pixels))
         
     elif method == "Dominante Achtergrondkleur":
         dominant_color = get_dominant_color(original_img)
-        new_img = Image.new('RGB', (new_width, new_height), dominant_color)
-        new_img.paste(original_img, (bleed_pixels, bleed_pixels))
-        
-    return new_img
+        bleed_bg = Image.new('RGB', (new_width, new_height), dominant_color)
 
-def export_to_pdf_native(image, page_size_mm, format_name, convert_cmyk, profile_name):
-    """De exacte PDF-canvas generator met reportlab metadata uit de computerversie"""
+    # --- CRUCIALE FIX: OVERLAP TEGEN SNIJRAND-LIJNEN ---
+    # We plakken de originele flyer er nu overheen met 2 pixels extra overlap (slight overscan)
+    # Dit drukt de microscopische schaduwlijnen/anti-aliasing randen volledig weg.
+    overlap = 2
+    resized_overlap = original_img.resize((width + (overlap * 2), height + (overlap * 2)), Image.Resampling.LANCZOS)
+    bleed_bg.paste(resized_overlap, (bleed_pixels - overlap, bleed_pixels - overlap))
+    
+    return bleed_bg
+
+def export_to_pdf_native(image, page_size_mm, convert_cmyk, profile_name):
     width_pt = page_size_mm[0] / 25.4 * 72
     height_pt = page_size_mm[1] / 25.4 * 72
     
@@ -134,9 +122,8 @@ def export_to_pdf_native(image, page_size_mm, format_name, convert_cmyk, profile
     c = canvas.Canvas(buffer, pagesize=(width_pt, height_pt))
     
     if convert_cmyk:
-        c.setProducer(f"Bleed Tool - CMYK converted with {profile_name} profile")
-        c.setTitle("C.A. Flyer - CMYK Ready")
-        c.setSubject("Converted to CMYK for professional printing")
+        c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name})")
+        c.setTitle("C.A. Flyer - Drukwerk Klaar")
     
     img_width_pt = image.width / 300 * 72
     img_height_pt = image.height / 300 * 72
@@ -161,18 +148,15 @@ def export_to_pdf_native(image, page_size_mm, format_name, convert_cmyk, profile
 
 # --- INTERFACE ---
 st.title("📐 PDF/Image Bleed Add Tool & CMYK Converter")
-st.subheader("Voeg automatisch zuivere afloopruimte toe zonder zichtbare snijlijnen")
-
-if not PDF_SUPPORT:
-    st.error("⚠️ Waarschuwing: `reportlab` is niet geïnstalleerd in de cloudomgeving. Voeg `reportlab` toe aan je requirements.txt!")
+st.subheader("Voeg automatisch naadloze afloopruimte toe zonder zichtbare overgangslijnen")
 
 with st.sidebar:
     st.header("🔧 Drukwerk Instellingen")
     selected_format = st.selectbox("Selecteer Doelformaat:", list(FORMATS.keys()), index=1)
     width_mm, height_mm = FORMATS[selected_format]
     
-    convert_to_cmyk = st.checkbox("Zet om naar CMYK kleurruimte (Drukwerk)", value=True)
-    color_profile = st.selectbox("Kleurprofiel:", ["USWebCoatedSWOP", "CoatedFOGRA39", "UncoatedFOGRA29", "GenericCMYK"], index=1)
+    convert_to_cmyk = st.checkbox("Zet om naar CMYK kleurruimte", value=True)
+    color_profile = st.selectbox("Kleurprofiel:", ["CoatedFOGRA39", "USWebCoatedSWOP", "GenericCMYK"], index=0)
     
     bleed_mm = st.number_input("Afloopruimte (Bleed) in mm:", min_value=0, max_value=20, value=3)
     fill_method = st.radio("Afloop Opvulmethode:", ["Spiegelen (Mirror)", "Randpixels Uitrekken (Stretch)", "Wit / Geselecteerde Kleur", "Dominante Achtergrondkleur"])
@@ -199,21 +183,21 @@ if uploaded_file is not None:
         st.image(original_img, caption=f"Origineel: {original_img.size[0]}x{original_img.size[1]} pixels", use_container_width=True)
         
     with col2:
-        st.markdown("<p class='report-title'>⚙️ Gecreëerde Afloop (Clean Voorbeeld)</p>", unsafe_allow_html=True)
+        st.markdown("<p class='report-title'>⚙️ Gecreëerde Afloop (Naadloos Resultaat)</p>", unsafe_allow_html=True)
         
-        with st.spinner("Berekenen van pixels op 300 DPI..."):
+        with st.spinner("Afloop berekenen met anti-line blending..."):
             pixel_per_mm = 11.811
             target_width_px = int(width_mm * pixel_per_mm)
             target_height_px = int(height_mm * pixel_per_mm)
             bleed_pixels = int(bleed_mm * pixel_per_mm)
             
-            # Stap 1: Schaal exact naar doelformaat (LANCZOS zoals computerversie)
+            # Schaal de basisflyer naar het netto formaat
             resized_base = original_img.resize((target_width_px, target_height_px), Image.Resampling.LANCZOS)
             
-            # Stap 2: Voeg afloop toe (Dit creëert de schone randen)
+            # Maak de bleed-afbeelding (nu mét de overlap fix op regel 97-99!)
             final_img = create_bleed_image(resized_base, bleed_pixels, fill_method, chosen_rgb)
             
-            # Preview tonen in de browser (Geen getekende kaders meer!)
+            # Toon de schone preview in de browser
             st.image(final_img, caption=f"Resultaat (+{bleed_mm}mm): {final_img.size[0]}x{final_img.size[1]} pixels", use_container_width=True)
             
             # Exporteren
@@ -221,32 +205,29 @@ if uploaded_file is not None:
             cmyk_suffix = "_CMYK" if convert_to_cmyk and output_type == "PDF (Aanbevolen)" else ""
             
             if output_type == "PDF (Aanbevolen)" and PDF_SUPPORT:
-                # Genereer de exacte PDF met ReportLab bytes
+                # Zet om naar echt CMYK-drukformaat indien geselecteerd
+                export_img = final_img.convert("CMYK") if convert_to_cmyk else final_img
                 pdf_data = export_to_pdf_native(
-                    final_img, 
+                    export_img, 
                     (width_mm + bleed_mm*2, height_mm + bleed_mm*2), 
-                    selected_format, 
                     convert_to_cmyk, 
                     color_profile
                 )
                 file_ext = "pdf"
                 mime_type = "application/pdf"
                 download_data = pdf_data
-                st.success("✅ Professionele CMYK PDF gegenereerd via exacte pixelmatrix.")
+                st.success("✅ Zuivere, naadloze PDF gegenereerd. De overgangslijn is weggewerkt.")
             else:
-                # Val terug op PNG export
                 buffer = io.BytesIO()
                 final_img.save(buffer, format="PNG", dpi=(300, 300))
                 file_ext = "png"
                 mime_type = "image/png"
                 download_data = buffer.getvalue()
-                if output_type == "PDF (Aanbevolen)":
-                    st.warning("⚠️ Systeem gebruikt PNG-fallback omdat reportlab ontbreekt in requirements.txt.")
 
             st.write("---")
             st.download_button(
-                label=f"📥 Download Schone {selected_format} Flyer ({file_ext.upper()})",
+                label=f"📥 Download Naadloze {selected_format} Flyer",
                 data=download_data,
-                file_name=f"{base_name}{cmyk_suffix}_CLEAN_BLEED_{bleed_mm}mm_{selected_format}.{file_ext}",
+                file_name=f"{base_name}{cmyk_suffix}_PERFECT_BLEED_{bleed_mm}mm_{selected_format}.{file_ext}",
                 mime=mime_type
             )
