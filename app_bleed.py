@@ -130,29 +130,32 @@ def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
         
     return new_img
     
-def export_to_pdf_native(image, page_size_mm, convert_cmyk, profile_name):
-    width_pt = page_size_mm[0] / 25.4 * 72
-    height_pt = page_size_mm[1] / 25.4 * 72
+def export_to_pdf_native(image, convert_cmyk, profile_name):
+    # CRUCIALE REPARATIE: Bereken de PDF-afmetingen exact op basis van de pixels / 300 DPI * 72 pt.
+    # Dit voorkomt microscopische afrondingsfouten tussen mm-matrix en pixel-matrix.
+    width_pt = (image.width / 300.0) * 72.0
+    height_pt = (image.height / 300.0) * 72.0
     
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(width_pt, height_pt))
+    
+    # Vul de achtergrond standaard met wit in plaats van transparant/zwart om kieren te maskeren
+    c.setFillColorRGB(1, 1, 1)
+    c.rect(0, 0, width_pt, height_pt, fill=1, stroke=0)
     
     if convert_cmyk:
         c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name})")
         c.setTitle("C.A. Flyer - Drukwerk Klaar")
     
-    img_width_pt = image.width / 300 * 72
-    img_height_pt = image.height / 300 * 72
-    
-    x_pos = (width_pt - img_width_pt) / 2
-    y_pos = (height_pt - img_height_pt) / 2
-    
+    # Sla de afbeelding tijdelijk op met maximale kwaliteit
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
         temp_path = tmp_file.name
         image.save(temp_path, 'JPEG', quality=100, dpi=(300, 300))
     
     img_reader = ImageReader(temp_path)
-    c.drawImage(img_reader, x_pos, y_pos, width=img_width_pt, height=img_height_pt, preserveAspectRatio=True)
+    # Teken de afbeelding exact vanaf coördinaat (0,0) over de gehele pagina
+    c.drawImage(img_reader, 0, 0, width=width_pt, height=height_pt, preserveAspectRatio=False)
+    c.showPage()
     c.save()
     
     try:
@@ -202,20 +205,18 @@ if uploaded_file is not None:
         st.markdown("<p class='report-title'>⚙️ Gecreëerde Afloop (Naadloos Resultaat)</p>", unsafe_allow_html=True)
         
         with st.spinner("Afloop berekenen met anti-line blending..."):
-            # ---- STRATEGIE EXACT UIT PC SCRIPT TOEGEPAST ----
             # Bereken doelgrootte in pixels op basis van gekozen formaat bij exact 300 DPI
             target_width = int(width_mm / 25.4 * 300)
             target_height = int(height_mm / 25.4 * 300)
             
-            # Eerst exact resizen naar doelgrootte
+            # Eerst exact resizen naar doelgrootte met hoogwaardige LANCZOS interpolatie
             resized_base = original_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             
-            # Bereken bleed pixels op basis van 300 DPI
+            # Bereken bleed pixels op basis van exact 300 DPI
             bleed_pixels = int(bleed_mm / 25.4 * 300)
             
             # Pas nu pas de bleed toe
             final_img = create_bleed_image(resized_base, bleed_pixels, fill_method, chosen_rgb)
-            # ------------------------------------------------
             
             # Toon de schone preview in de browser
             st.image(final_img, caption=f"Resultaat (+{bleed_mm}mm): {final_img.size[0]}x{final_img.size[1]} pixels", use_container_width=True)
@@ -226,9 +227,9 @@ if uploaded_file is not None:
             
             if output_type == "PDF (Aanbevolen)" and PDF_SUPPORT:
                 export_img = final_img.convert("CMYK") if convert_to_cmyk else final_img
+                # We geven hier de export_img mee zodat de PDF-pagina exact meeschaalt met de pixels
                 pdf_data = export_to_pdf_native(
                     export_img, 
-                    (width_mm + bleed_mm*2, height_mm + bleed_mm*2), 
                     convert_to_cmyk, 
                     color_profile
                 )
