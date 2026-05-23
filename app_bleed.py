@@ -1,6 +1,6 @@
 import streamlit as st
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 from collections import Counter
 import io
 import os
@@ -44,8 +44,6 @@ def get_dominant_color(image):
     small_img = small_img.quantize(colors=64).convert('RGB')
     pixels = list(small_img.getdata())
     return Counter(pixels).most_common(1)[0][0]
-
-from PIL import ImageFilter  # Zorg dat dit helemaal bovenaan je bestand staat!
 
 def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
     width, height = original_img.size
@@ -149,10 +147,8 @@ def export_to_pdf_native(image, page_size_mm, convert_cmyk, profile_name):
     x_pos = (width_pt - img_width_pt) / 2
     y_pos = (height_pt - img_height_pt) / 2
     
-    # Pas de suffix aan naar .jpg omdat JPEG wél CMYK ondersteunt (PNG niet!)
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
         temp_path = tmp_file.name
-        # Sla op als JPEG met maximale kwaliteit om compressieverlies te voorkomen
         image.save(temp_path, 'JPEG', quality=100, dpi=(300, 300))
     
     img_reader = ImageReader(temp_path)
@@ -206,16 +202,20 @@ if uploaded_file is not None:
         st.markdown("<p class='report-title'>⚙️ Gecreëerde Afloop (Naadloos Resultaat)</p>", unsafe_allow_html=True)
         
         with st.spinner("Afloop berekenen met anti-line blending..."):
-            pixel_per_mm = 11.811
-            target_width_px = int(width_mm * pixel_per_mm)
-            target_height_px = int(height_mm * pixel_per_mm)
-            bleed_pixels = int(bleed_mm * pixel_per_mm)
+            # ---- STRATEGIE EXACT UIT PC SCRIPT TOEGEPAST ----
+            # Bereken doelgrootte in pixels op basis van gekozen formaat bij exact 300 DPI
+            target_width = int(width_mm / 25.4 * 300)
+            target_height = int(height_mm / 25.4 * 300)
             
-            # Schaal de basisflyer naar het netto formaat
-            resized_base = original_img.resize((target_width_px, target_height_px), Image.Resampling.LANCZOS)
+            # Eerst exact resizen naar doelgrootte
+            resized_base = original_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
             
-            # Maak de bleed-afbeelding (nu mét de overlap fix op regel 97-99!)
+            # Bereken bleed pixels op basis van 300 DPI
+            bleed_pixels = int(bleed_mm / 25.4 * 300)
+            
+            # Pas nu pas de bleed toe
             final_img = create_bleed_image(resized_base, bleed_pixels, fill_method, chosen_rgb)
+            # ------------------------------------------------
             
             # Toon de schone preview in de browser
             st.image(final_img, caption=f"Resultaat (+{bleed_mm}mm): {final_img.size[0]}x{final_img.size[1]} pixels", use_container_width=True)
@@ -225,7 +225,6 @@ if uploaded_file is not None:
             cmyk_suffix = "_CMYK" if convert_to_cmyk and output_type == "PDF (Aanbevolen)" else ""
             
             if output_type == "PDF (Aanbevolen)" and PDF_SUPPORT:
-                # Zet om naar echt CMYK-drukformaat indien geselecteerd
                 export_img = final_img.convert("CMYK") if convert_to_cmyk else final_img
                 pdf_data = export_to_pdf_native(
                     export_img, 
