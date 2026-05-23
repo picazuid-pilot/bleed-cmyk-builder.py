@@ -26,7 +26,7 @@ except ImportError:
 
 # Pagina-instellingen
 st.set_page_config(
-    page_title="C.A. Professional Bleed Tool - Haarlijn Vrij",
+    page_title="C.A. Professional Bleed Tool - Pixel Perfect",
     page_icon="📐",
     layout="wide"
 )
@@ -106,130 +106,210 @@ def remove_crop_marks(image, crop_pixels):
         ))
     return image
 
-def create_seamless_bleed(original_img, bleed_pixels, method, custom_color=None):
+def create_pixel_perfect_bleed(original_img, bleed_pixels, method, custom_color=None, blur_pixels=8):
     """
-    CREËERT EEN HAARLIJN-VRIJE BLEED
-    Fixes:
-    1. Geen resize() als basis - voorkomt interpolatie artifacts
-    2. Geen +1 overlap pixels - voorkomt dubbele randen
-    3. Exacte pixel positions - geen subpixel afronding
+    CREËERT EEN PIXEL-PERFECTE BLEED
+    Belangrijk: De randpixels worden exact gekopieerd van de originele randen
+    Geen +1 of -1 afrondingsfouten meer!
     """
     width, height = original_img.size
     new_width = width + (bleed_pixels * 2)
     new_height = height + (bleed_pixels * 2)
     
     if method == "Wit / Geselecteerde Kleur":
-        # Eenvoudige kleurvulling - geen risico op haarlijnen
+        # Eenvoudige kleurvulling
         color = custom_color if custom_color else (255, 255, 255)
         new_img = Image.new('RGB', (new_width, new_height), color)
         new_img.paste(original_img, (bleed_pixels, bleed_pixels))
         
-    elif method == "Spiegelen (Mirror)":
-        # FIX 1: Start met leeg canvas, GEEN resize!
+        # Vervaging op de rand voor naadloze overgang
+        if blur_pixels > 0:
+            new_img = apply_edge_blur(new_img, bleed_pixels, blur_pixels)
+        
+        return new_img
+        
+    elif method == "Spiegelen (Mirror) - Pixel Perfect":
+        # Creëer canvas
         new_img = Image.new('RGB', (new_width, new_height))
         
-        # Plak origineel in het midden
-        new_img.paste(original_img, (bleed_pixels, bleed_pixels))
+        # PIXEL-PERFECT: Kopieer exacte pixels van origineel naar bleed
+        # Geen interpolatie, geen resize, exacte kopie!
         
-        # FIX 2: Geen +1 overlap - exacte pixels
-        # Spiegel bovenrand (exact bleed_pixels, niet +1)
-        if bleed_pixels > 0:
-            top_mirror = original_img.crop((0, 0, width, bleed_pixels))
-            top_mirror = top_mirror.transpose(Image.FLIP_TOP_BOTTOM)
-            new_img.paste(top_mirror, (bleed_pixels, 0))
-            
-            # Spiegel onderrand
-            bottom_mirror = original_img.crop((0, height - bleed_pixels, width, height))
-            bottom_mirror = bottom_mirror.transpose(Image.FLIP_TOP_BOTTOM)
-            new_img.paste(bottom_mirror, (bleed_pixels, new_height - bleed_pixels))
-            
-            # Spiegel linkerrand
-            left_mirror = original_img.crop((0, 0, bleed_pixels, height))
-            left_mirror = left_mirror.transpose(Image.FLIP_LEFT_RIGHT)
-            new_img.paste(left_mirror, (0, bleed_pixels))
-            
-            # Spiegel rechterrand
-            right_mirror = original_img.crop((width - bleed_pixels, 0, width, height))
-            right_mirror = right_mirror.transpose(Image.FLIP_LEFT_RIGHT)
-            new_img.paste(right_mirror, (new_width - bleed_pixels, bleed_pixels))
-            
-            # Spiegel hoeken
-            if bleed_pixels > 0:
-                # Boven-links
-                top_left = original_img.crop((0, 0, bleed_pixels, bleed_pixels))
-                top_left = top_left.transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-                new_img.paste(top_left, (0, 0))
-                
-                # Boven-rechts
-                top_right = original_img.crop((width - bleed_pixels, 0, width, bleed_pixels))
-                top_right = top_right.transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-                new_img.paste(top_right, (new_width - bleed_pixels, 0))
-                
-                # Onder-links
-                bottom_left = original_img.crop((0, height - bleed_pixels, bleed_pixels, height))
-                bottom_left = bottom_left.transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-                new_img.paste(bottom_left, (0, new_height - bleed_pixels))
-                
-                # Onder-rechts
-                bottom_right = original_img.crop((width - bleed_pixels, height - bleed_pixels, width, height))
-                bottom_right = bottom_right.transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-                new_img.paste(bottom_right, (new_width - bleed_pixels, new_height - bleed_pixels))
-        
-    elif method == "Randpixels Uitrekken (Stretch)":
-        # FIX: Start met leeg canvas
-        new_img = Image.new('RGB', (new_width, new_height))
+        # Eerst het origineel in het midden
         new_img.paste(original_img, (bleed_pixels, bleed_pixels))
         
         if bleed_pixels > 0:
-            # Rek bovenrand uit (exacte pixels)
-            top_strip = original_img.crop((0, 0, width, 1))
-            top_stretched = top_strip.resize((width, bleed_pixels), Image.Resampling.NEAREST)
-            new_img.paste(top_stretched, (bleed_pixels, 0))
+            # BOVENRAND: Kopieer exacte pixels van boven naar beneden
+            for y in range(bleed_pixels):
+                source_y = y  # Bovenste pixels van origineel
+                target_y = bleed_pixels - 1 - y  # Omgekeerd voor mirror
+                
+                # Haal de volledige rij pixels op uit het origineel
+                source_row = original_img.crop((0, source_y, width, source_y + 1))
+                # Plak ze op de target locatie in bleed
+                new_img.paste(source_row, (bleed_pixels, target_y))
             
-            # Rek onderrand uit
-            bottom_strip = original_img.crop((0, height-1, width, height))
-            bottom_stretched = bottom_strip.resize((width, bleed_pixels), Image.Resampling.NEAREST)
-            new_img.paste(bottom_stretched, (bleed_pixels, new_height - bleed_pixels))
+            # ONDERRAND: Kopieer exacte pixels van onder naar boven
+            for y in range(bleed_pixels):
+                source_y = height - 1 - y  # Onderste pixels van origineel
+                target_y = new_height - bleed_pixels + y  # Omgekeerd voor mirror
+                
+                source_row = original_img.crop((0, source_y, width, source_y + 1))
+                new_img.paste(source_row, (bleed_pixels, target_y))
             
-            # Rek linkerrand uit
-            left_strip = original_img.crop((0, 0, 1, height))
-            left_stretched = left_strip.resize((bleed_pixels, height), Image.Resampling.NEAREST)
-            new_img.paste(left_stretched, (0, bleed_pixels))
+            # LINKERRAND: Kopieer exacte pixels van links naar rechts
+            for x in range(bleed_pixels):
+                source_x = x
+                target_x = bleed_pixels - 1 - x
+                
+                source_col = original_img.crop((source_x, 0, source_x + 1, height))
+                new_img.paste(source_col, (target_x, bleed_pixels))
             
-            # Rek rechterrand uit
-            right_strip = original_img.crop((width-1, 0, width, height))
-            right_stretched = right_strip.resize((bleed_pixels, height), Image.Resampling.NEAREST)
-            new_img.paste(right_stretched, (new_width - bleed_pixels, bleed_pixels))
+            # RECHTERRAND: Kopieer exacte pixels van rechts naar links
+            for x in range(bleed_pixels):
+                source_x = width - 1 - x
+                target_x = new_width - bleed_pixels + x
+                
+                source_col = original_img.crop((source_x, 0, source_x + 1, height))
+                new_img.paste(source_col, (target_x, bleed_pixels))
             
-            # Vul hoeken
-            corner_color = original_img.getpixel((0, 0))
-            corner = Image.new('RGB', (bleed_pixels, bleed_pixels), corner_color)
-            new_img.paste(corner, (0, 0))
-            new_img.paste(corner, (new_width - bleed_pixels, 0))
-            new_img.paste(corner, (0, new_height - bleed_pixels))
-            new_img.paste(corner, (new_width - bleed_pixels, new_height - bleed_pixels))
+            # HOEKEN: 4 hoeken exact spiegelen
+            # Boven-links
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    source_pixel = original_img.getpixel((x, y))
+                    new_img.putpixel((bleed_pixels - 1 - x, bleed_pixels - 1 - y), source_pixel)
+            
+            # Boven-rechts
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    source_pixel = original_img.getpixel((width - 1 - x, y))
+                    new_img.putpixel((new_width - bleed_pixels + x, bleed_pixels - 1 - y), source_pixel)
+            
+            # Onder-links
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    source_pixel = original_img.getpixel((x, height - 1 - y))
+                    new_img.putpixel((bleed_pixels - 1 - x, new_height - bleed_pixels + y), source_pixel)
+            
+            # Onder-rechts
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    source_pixel = original_img.getpixel((width - 1 - x, height - 1 - y))
+                    new_img.putpixel((new_width - bleed_pixels + x, new_height - bleed_pixels + y), source_pixel)
+        
+        # Vervaging op de rand voor naadloze overgang
+        if blur_pixels > 0:
+            new_img = apply_edge_blur(new_img, bleed_pixels, blur_pixels)
+        
+        return new_img
+        
+    elif method == "Randpixels Uitrekken (Stretch) - Pixel Perfect":
+        new_img = Image.new('RGB', (new_width, new_height))
+        new_img.paste(original_img, (bleed_pixels, bleed_pixels))
+        
+        if bleed_pixels > 0:
+            # BOVENRAND: Herhaal de eerste pixelrij
+            top_row = original_img.crop((0, 0, width, 1))
+            for y in range(bleed_pixels):
+                new_img.paste(top_row, (bleed_pixels, y))
+            
+            # ONDERRAND: Herhaal de laatste pixelrij
+            bottom_row = original_img.crop((0, height-1, width, height))
+            for y in range(bleed_pixels):
+                new_img.paste(bottom_row, (bleed_pixels, new_height - bleed_pixels + y))
+            
+            # LINKERRAND: Herhaal de eerste pixelkolom
+            left_col = original_img.crop((0, 0, 1, height))
+            for x in range(bleed_pixels):
+                new_img.paste(left_col, (x, bleed_pixels))
+            
+            # RECHTERRAND: Herhaal de laatste pixelkolom
+            right_col = original_img.crop((width-1, 0, width, height))
+            for x in range(bleed_pixels):
+                new_img.paste(right_col, (new_width - bleed_pixels + x, bleed_pixels))
+            
+            # HOEKEN: Gebruik de hoekpixels
+            top_left_pixel = original_img.getpixel((0, 0))
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    new_img.putpixel((x, y), top_left_pixel)
+            
+            top_right_pixel = original_img.getpixel((width-1, 0))
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    new_img.putpixel((new_width - bleed_pixels + x, y), top_right_pixel)
+            
+            bottom_left_pixel = original_img.getpixel((0, height-1))
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    new_img.putpixel((x, new_height - bleed_pixels + y), bottom_left_pixel)
+            
+            bottom_right_pixel = original_img.getpixel((width-1, height-1))
+            for y in range(bleed_pixels):
+                for x in range(bleed_pixels):
+                    new_img.putpixel((new_width - bleed_pixels + x, new_height - bleed_pixels + y), bottom_right_pixel)
+        
+        # Vervaging op de rand
+        if blur_pixels > 0:
+            new_img = apply_edge_blur(new_img, bleed_pixels, blur_pixels)
+        
+        return new_img
         
     elif method == "Dominante Achtergrondkleur":
         dominant_color = get_dominant_color(original_img)
         new_img = Image.new('RGB', (new_width, new_height), dominant_color)
         new_img.paste(original_img, (bleed_pixels, bleed_pixels))
-    
-    return new_img
+        
+        if blur_pixels > 0:
+            new_img = apply_edge_blur(new_img, bleed_pixels, blur_pixels)
+        
+        return new_img
 
-def export_to_pdf_haarlijnvrij(image, convert_cmyk, profile_name, output_format, bleed_mm):
+def apply_edge_blur(image, bleed_pixels, blur_radius):
+    """
+    Pas een Gaussiaanse vervaging toe op de rand van de bleed
+    Dit zorgt voor een vloeiende overgang tussen origineel en bleed
+    """
+    # Maak een kopie om te vervagen
+    blurred = image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    
+    # Creëer een masker voor alleen de randzone
+    mask = Image.new('L', image.size, 0)
+    draw = ImageDraw.Draw(mask)
+    
+    # Teken de bleed zones in het masker
+    width, height = image.size
+    
+    # Bovenrand
+    draw.rectangle([bleed_pixels, 0, width - bleed_pixels, min(blur_radius * 2, bleed_pixels)], fill=255)
+    # Onderrand
+    draw.rectangle([bleed_pixels, height - min(blur_radius * 2, bleed_pixels), width - bleed_pixels, height], fill=255)
+    # Linkerrand
+    draw.rectangle([0, bleed_pixels, min(blur_radius * 2, bleed_pixels), height - bleed_pixels], fill=255)
+    # Rechterrand
+    draw.rectangle([width - min(blur_radius * 2, bleed_pixels), bleed_pixels, width, height - bleed_pixels], fill=255)
+    # Hoeken
+    draw.rectangle([0, 0, min(blur_radius * 2, bleed_pixels), min(blur_radius * 2, bleed_pixels)], fill=255)
+    draw.rectangle([width - min(blur_radius * 2, bleed_pixels), 0, width, min(blur_radius * 2, bleed_pixels)], fill=255)
+    draw.rectangle([0, height - min(blur_radius * 2, bleed_pixels), min(blur_radius * 2, bleed_pixels), height], fill=255)
+    draw.rectangle([width - min(blur_radius * 2, bleed_pixels), height - min(blur_radius * 2, bleed_pixels), width, height], fill=255)
+    
+    # Pas alleen vervaging toe op de randzone
+    result = Image.composite(blurred, image, mask)
+    
+    return result
+
+def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, bleed_mm):
     """
     EXPORTEER NAAR PDF ZONDER HAARLIJNEN
-    Fixes:
-    1. PNG voor afbeelding (geen compressie artifacts)
-    2. Overscan - overfill de pagina met 0.5pt
-    3. CMYK via metadata, niet via PNG (want PNG ondersteunt geen CMYK)
     """
-    # Bereken afmetingen in punten (1 pt = 1/72 inch)
+    # Bereken afmetingen in punten
     width_pt = (image.width / 300.0) * 72.0
     height_pt = (image.height / 300.0) * 72.0
     
-    # FIX: Overscan van 0.5 punt om haarlijnen te voorkomen
-    overscan = 0.5  # punt
+    # Overscan om haarlijnen te voorkomen
+    overscan = 1.0  # 1 punt overlap
     
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(width_pt + overscan, height_pt + overscan))
@@ -238,25 +318,22 @@ def export_to_pdf_haarlijnvrij(image, convert_cmyk, profile_name, output_format,
     c.setFillColorRGB(1, 1, 1)
     c.rect(0, 0, width_pt + overscan, height_pt + overscan, fill=1, stroke=0)
     
-    # Metadata voor CMYK (belangrijk voor drukwerk)
+    # Metadata
     if convert_cmyk:
-        c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name}) - Haarlijn Vrij")
+        c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name}) - Pixel Perfect")
         c.setTitle(f"C.A. Document - {output_format} - {bleed_mm}mm bleed")
-        c.setSubject("CMYK ready voor professioneel drukwerk")
     
-    # FIX: Gebruik PNG voor de afbeelding (geen compressie artifacts!)
-    # PNG ondersteunt geen CMYK, dus we bewaren als RGB maar met CMYK metadata
+    # Gebruik PNG voor maximale kwaliteit
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
         temp_path = tmp_file.name
-        # Bewaar als RGB PNG (geen kwaliteitsverlies)
         image.save(temp_path, 'PNG', dpi=(300, 300))
     
-    # FIX: Plaats afbeelding met overscan (iets groter dan pagina)
+    # Plaats afbeelding met overscan
     img_reader = ImageReader(temp_path)
     c.drawImage(
         img_reader,
-        -overscan/2,  # Iets naar links/rechts overlappen
-        -overscan/2,  # Iets naar boven/onder overlappen
+        -overscan/2,
+        -overscan/2,
         width=width_pt + overscan,
         height=height_pt + overscan,
         preserveAspectRatio=False,
@@ -266,7 +343,6 @@ def export_to_pdf_haarlijnvrij(image, convert_cmyk, profile_name, output_format,
     c.showPage()
     c.save()
     
-    # Opruimen
     try:
         os.unlink(temp_path)
     except:
@@ -290,15 +366,22 @@ def check_aspect_ratio(image, format_name):
 # HOOFD INTERFACE
 # ============================================================================
 
-st.title("📐 C.A. Professional Bleed Tool - Haarlijn Vrij")
-st.subheader("Professionele afloopruimte zonder zichtbare naden of snijranden")
+st.title("📐 C.A. Professional Bleed Tool - Pixel Perfect")
+st.subheader("Professionele afloopruimte met exacte pixel matching en vloeiende overgangen")
 
 with st.sidebar:
     st.header("🔧 Drukwerk Instellingen")
     
-    selected_format = st.selectbox("📄 Doelformaat:", list(FORMATS.keys()), index=1)
-    width_mm, height_mm = FORMATS[selected_format]
-    st.caption(f"{width_mm} × {height_mm} mm")
+    # Input formaat (originele bestandsformaat)
+    input_format = st.selectbox("📥 Input Formaat (Origineel bestand):", list(FORMATS.keys()), index=1)
+    st.caption("Het formaat waarin je bestand is gemaakt")
+    
+    st.divider()
+    
+    # Output formaat (gewenste output)
+    output_format = st.selectbox("📤 Output Formaat (Gewenste output):", list(FORMATS.keys()), index=1)
+    width_mm, height_mm = FORMATS[output_format]
+    st.caption(f"Output wordt: {width_mm} × {height_mm} mm")
     
     st.divider()
     
@@ -306,15 +389,23 @@ with st.sidebar:
     bleed_mm = st.number_input("📏 Bleed (mm):", min_value=0.0, max_value=20.0, value=3.0, step=0.5, format="%.1f")
     st.caption("Aanbevolen: 3mm voor drukwerk")
     
+    # Vervaging instellingen
+    st.divider()
+    st.subheader("🎨 Overgangsinstellingen")
+    blur_pixels = st.slider("Randvervaging (pixels):", 0, 56, 12, 
+                            help="Vervaging op de overgang tussen origineel en bleed. 8-16 pixels werkt meestal goed.")
+    st.caption("Hogere waarde = vloeiendere overgang")
+    
     fill_method = st.radio(
         "🎨 Vulmethode:",
-        ["Spiegelen (Mirror)", "Randpixels Uitrekken (Stretch)", "Wit / Geselecteerde Kleur", "Dominante Achtergrondkleur"],
-        help="Mirror: beste voor patronen | Stretch: beste voor foto's"
+        ["Spiegelen (Mirror) - Pixel Perfect", "Randpixels Uitrekken (Stretch) - Pixel Perfect", 
+         "Wit / Geselecteerde Kleur", "Dominante Achtergrondkleur"],
+        help="Mirror: exacte pixel kopie | Stretch: herhaal randpixels"
     )
     
     # Kleur selectie
     chosen_rgb = (255, 255, 255)
-    if fill_method == "Wit / Geselecteerde Kleur":
+    if "Wit / Geselecteerde Kleur" in fill_method:
         hex_color = st.color_picker("🎨 Randkleur:", "#FFFFFF")
         chosen_rgb = tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
         c, m, y, k = rgb_to_cmyk(*chosen_rgb)
@@ -324,16 +415,10 @@ with st.sidebar:
     
     # CMYK instellingen
     st.subheader("🖨️ CMYK")
-    convert_to_cmyk = st.checkbox("CMYK metadata toevoegen", value=True,
-                                  help="Voeg CMYK metadata toe aan PDF voor drukwerk")
+    convert_to_cmyk = st.checkbox("CMYK metadata toevoegen", value=True)
     if convert_to_cmyk:
         color_profile = st.selectbox("Profiel:", list(COLOR_PROFILES.keys()), index=0)
         st.caption(COLOR_PROFILES[color_profile])
-    
-    st.divider()
-    
-    # Output
-    output_type = st.radio("📁 Output:", ["PDF (Aanbevolen)", "PNG"])
     
     # PDF import
     st.divider()
@@ -378,7 +463,7 @@ if uploaded_file is not None:
         
         # Aspect ratio check
         st.markdown("### 📏 2. Formaat check")
-        aspect_msg = check_aspect_ratio(original_img, selected_format)
+        aspect_msg = check_aspect_ratio(original_img, output_format)
         if "⚠️" in aspect_msg:
             st.warning(aspect_msg)
         else:
@@ -392,8 +477,8 @@ if uploaded_file is not None:
             st.image(original_img, use_container_width=True)
         
         # Verwerk bleed
-        with st.spinner("🔧 Bleed toevoegen (haarlijnvrij)..."):
-            # Resize naar exact formaat
+        with st.spinner("🔧 Bleed toevoegen (pixel-perfect met vervaging)..."):
+            # Resize naar exact output formaat
             target_width = int(width_mm / 25.4 * 300)
             target_height = int(height_mm / 25.4 * 300)
             resized_img = original_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
@@ -401,54 +486,37 @@ if uploaded_file is not None:
             # Bleed pixels
             bleed_pixels = int(bleed_mm / 25.4 * 300)
             
-            # Creëer naadloze bleed
-            final_img = create_seamless_bleed(resized_img, bleed_pixels, fill_method, chosen_rgb)
+            # Creëer pixel-perfect bleed
+            final_img = create_pixel_perfect_bleed(
+                resized_img, bleed_pixels, fill_method, chosen_rgb, blur_pixels
+            )
         
         with col2:
             st.markdown('<p class="report-title">✨ Met Bleed</p>', unsafe_allow_html=True)
             st.image(final_img, use_container_width=True)
-            st.success(f"✅ +{bleed_mm}mm bleed (haarlijnvrij)")
+            st.success(f"✅ +{bleed_mm}mm bleed | Vervaging: {blur_pixels}px")
         
         # Export
         st.markdown("### 💾 3. Exporteer")
         
         base_name = os.path.splitext(uploaded_file.name)[0]
-        cmyk_suffix = "_CMYK" if convert_to_cmyk and output_type == "PDF (Aanbevolen)" else ""
+        cmyk_suffix = "_CMYK" if convert_to_cmyk else ""
         
-        if output_type == "PDF (Aanbevolen)":
-            if not PDF_SUPPORT:
-                st.error("Installeer reportlab: pip install reportlab")
-                st.stop()
-            
-            with st.spinner("📑 PDF genereren (haarlijnvrij)..."):
-                pdf_data = export_to_pdf_haarlijnvrij(
-                    final_img, convert_to_cmyk, color_profile, selected_format, bleed_mm
-                )
-                
-                st.download_button(
-                    label=f"📥 Download {selected_format} PDF {cmyk_suffix}",
-                    data=pdf_data,
-                    file_name=f"{base_name}{cmyk_suffix}_BLEED{int(bleed_mm)}mm_{selected_format}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-                
-                if convert_to_cmyk:
-                    st.info(f"🖨️ CMYK metadata toegevoegd - {color_profile}")
-                else:
-                    st.info("📄 RGB PDF - Geschikt voor schermweergave")
-        else:
-            # PNG export
-            buffer = io.BytesIO()
-            final_img.save(buffer, format="PNG", dpi=(300, 300))
+        with st.spinner("📑 PDF genereren (haarlijnvrij)..."):
+            pdf_data = export_to_pdf_perfect(
+                final_img, convert_to_cmyk, color_profile, output_format, bleed_mm
+            )
             
             st.download_button(
-                label=f"📥 Download {selected_format} PNG",
-                data=buffer.getvalue(),
-                file_name=f"{base_name}{cmyk_suffix}_BLEED{int(bleed_mm)}mm_{selected_format}.png",
-                mime="image/png",
+                label=f"📥 Download {output_format} PDF {cmyk_suffix}",
+                data=pdf_data,
+                file_name=f"{base_name}{cmyk_suffix}_BLEED{int(bleed_mm)}mm_{output_format}.pdf",
+                mime="application/pdf",
                 use_container_width=True
             )
+            
+            if convert_to_cmyk:
+                st.info(f"🖨️ CMYK metadata - {color_profile}")
         
         st.balloons()
         
@@ -462,16 +530,34 @@ else:
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("### 📌 Stappen\n1. Upload bestand\n2. Kies formaat\n3. Stel bleed in\n4. Download")
+        st.markdown("""
+        ### 📌 Stappen
+        1. Upload bestand
+        2. Kies output formaat
+        3. Stel bleed in
+        4. Download
+        """)
     
     with col2:
-        st.markdown("### 🎨 Methodes\n- Mirror: voor patronen\n- Stretch: voor foto's\n- Kleur: strak design\n- Dominant: automatisch")
+        st.markdown("""
+        ### 🎨 Pixel Perfect
+        - Exacte pixel kopie
+        - Geen interpolatie
+        - Randvervaging
+        - Vloeiende overgang
+        """)
     
     with col3:
-        st.markdown("### ✨ Features\n- ✓ Geen haarlijnen\n- ✓ Geen JPEG artifacts\n- ✓ Overscan fix\n- ✓ PNG kwaliteit")
+        st.markdown("""
+        ### ✨ Features
+        - ✓ Geen haarlijnen
+        - ✓ Pixel matching
+        - ✓ Vervaging optie
+        - ✓ PNG kwaliteit
+        """)
 
 st.markdown("---")
 st.markdown(
-    "<p style='text-align: center; color: #666;'>© 2024 C.A. Professional Bleed Tool | Haarlijnvrij voor drukwerk</p>", 
+    "<p style='text-align: center; color: #666;'>© 2024 C.A. Professional Bleed Tool | Pixel Perfect voor drukwerk</p>", 
     unsafe_allow_html=True
 )
