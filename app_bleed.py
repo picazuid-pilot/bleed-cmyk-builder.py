@@ -288,8 +288,8 @@ with st.sidebar:
     
     st.divider()
     
-    # Bleed instellingen
-    bleed_mm = st.number_input("📏 Afloopruimte (Bleed) in mm:", min_value=0, max_value=20, value=3, step=0.5)
+    # Bleed instellingen - FIX: gebruik float voor step
+    bleed_mm = st.number_input("📏 Afloopruimte (Bleed) in mm:", min_value=0.0, max_value=20.0, value=3.0, step=0.5, format="%.1f")
     st.caption("Standaard 3mm is gebruikelijk voor drukwerk")
     
     fill_method = st.radio(
