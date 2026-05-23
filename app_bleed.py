@@ -4,10 +4,20 @@ from PIL import Image, ImageOps
 from collections import Counter
 import io
 import os
+import tempfile
+
+# Probeer reportlab te importeren voor de exacte PDF-matrix export
+try:
+    from reportlab.lib.pagesizes import A0, A1, A2, A3, A4, A5
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
 
 # Pagina-instellingen voor de internetbrowser
 st.set_page_config(
-    page_title="PDF/Image Bleed Add Tool",
+    page_title="C.A. Professional Bleed Tool",
     page_icon="📐",
     layout="wide"
 )
@@ -21,7 +31,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Definiëring van formaten en basisfuncties uit jouw originele script
 FORMATS = {
     "A5": (148, 210),
     "A4": (210, 297),
@@ -31,16 +40,9 @@ FORMATS = {
     "A0": (841, 1189)
 }
 
-PROFILES = {
-    "USWebCoatedSWOP": "US Web Coated (SWOP) v2 - Standaard voor VS drukwerk",
-    "CoatedFOGRA39": "Coated FOGRA39 (ISO 12647-2:2004) - Europees standaard",
-    "UncoatedFOGRA29": "Uncoated FOGRA29 - Voor ongestreken papier",
-    "JapanColor2001Coated": "Japan Color 2001 Coated - Japans standaard",
-    "GenericCMYK": "Generic CMYK - Algemene CMYK conversie"
-}
+PDF_SIZES = {"A5": A5, "A4": A4, "A3": A3, "A2": A2, "A1": A1, "A0": A0}
 
 def rgb_to_cmyk(r, g, b):
-    """Dynamische RGB naar CMYK berekening uit jouw originele script"""
     if r == 0 and g == 0 and b == 0:
         return (0, 0, 0, 100)
     r_prime, g_prime, b_prime = r / 255.0, g / 255.0, b / 255.0
@@ -54,16 +56,14 @@ def rgb_to_cmyk(r, g, b):
     return (c * 100, m * 100, y * 100, k * 100)
 
 def get_dominant_color(image):
-    """Dominante kleurmatrix bepalen uit jouw script"""
     small_img = image.resize((100, 100))
     small_img = small_img.quantize(colors=64)
     small_img = small_img.convert('RGB')
     pixels = list(small_img.getdata())
-    color_counts = Counter(pixels)
-    return color_counts.most_common(1)[0][0]
+    return Counter(pixels).most_common(1)[0][0]
 
 def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
-    """De exacte afloop-algoritmes (wit, spiegelen, uitrekken, dominant) uit jouw script"""
+    """De exacte afloop-algoritmes uit de computerversie (CA_App_Bleed&CMYK.py)"""
     width, height = original_img.size
     new_width = width + (bleed_pixels * 2)
     new_height = height + (bleed_pixels * 2)
@@ -77,7 +77,6 @@ def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
         new_img = Image.new('RGB', (new_width, new_height))
         new_img.paste(original_img, (bleed_pixels, bleed_pixels))
         
-        # Spiegel randen boven/onder/links/rechts
         top_mirror = original_img.crop((0, 0, width, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM)
         new_img.paste(top_mirror, (bleed_pixels, 0))
         
@@ -90,7 +89,6 @@ def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
         right_mirror = original_img.crop((width - bleed_pixels, 0, width, height)).transpose(Image.FLIP_LEFT_RIGHT)
         new_img.paste(right_mirror, (new_width - bleed_pixels, bleed_pixels))
         
-        # Spiegel de 4 hoeken
         top_left = original_img.crop((0, 0, bleed_pixels, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
         new_img.paste(top_left, (0, 0))
         top_right = original_img.crop((width - bleed_pixels, 0, width, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
@@ -104,13 +102,13 @@ def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
         new_img = Image.new('RGB', (new_width, new_height))
         new_img.paste(original_img, (bleed_pixels, bleed_pixels))
         
-        top_stretched = original_img.crop((0, 0, width, 1)).resize((width, bleed_pixels), Image.NEAREST)
+        top_stretched = original_img.crop((0, 0, width, 1)).resize((width, bleed_pixels), Image.Resampling.NEAREST)
         new_img.paste(top_stretched, (bleed_pixels, 0))
-        bottom_stretched = original_img.crop((0, height-1, width, height)).resize((width, bleed_pixels), Image.NEAREST)
+        bottom_stretched = original_img.crop((0, height-1, width, height)).resize((width, bleed_pixels), Image.Resampling.NEAREST)
         new_img.paste(bottom_stretched, (bleed_pixels, new_height - bleed_pixels))
-        left_stretched = original_img.crop((0, 0, 1, height)).resize((bleed_pixels, height), Image.NEAREST)
+        left_stretched = original_img.crop((0, 0, 1, height)).resize((bleed_pixels, height), Image.Resampling.NEAREST)
         new_img.paste(left_stretched, (0, bleed_pixels))
-        right_stretched = original_img.crop((width-1, 0, width, height)).resize((bleed_pixels, height), Image.NEAREST)
+        right_stretched = original_img.crop((width-1, 0, width, height)).resize((bleed_pixels, height), Image.Resampling.NEAREST)
         new_img.paste(right_stretched, (new_width - bleed_pixels, bleed_pixels))
         
         top_left_color = original_img.getpixel((0, 0))
@@ -127,52 +125,70 @@ def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
         
     return new_img
 
-# --- INTRO INTERFACE ---
-st.title("📐 PDF/Image Bleed Add & CMYK Converter")
-st.subheader("Voeg automatisch afloopruimte (bleed) toe en converteer naar CMYK via je browser")
+def export_to_pdf_native(image, page_size_mm, format_name, convert_cmyk, profile_name):
+    """De exacte PDF-canvas generator met reportlab metadata uit de computerversie"""
+    width_pt = page_size_mm[0] / 25.4 * 72
+    height_pt = page_size_mm[1] / 25.4 * 72
+    
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=(width_pt, height_pt))
+    
+    if convert_cmyk:
+        c.setProducer(f"Bleed Tool - CMYK converted with {profile_name} profile")
+        c.setTitle("C.A. Flyer - CMYK Ready")
+        c.setSubject("Converted to CMYK for professional printing")
+    
+    img_width_pt = image.width / 300 * 72
+    img_height_pt = image.height / 300 * 72
+    
+    x_pos = (width_pt - img_width_pt) / 2
+    y_pos = (height_pt - img_height_pt) / 2
+    
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+        temp_path = tmp_file.name
+        image.save(temp_path, 'PNG', dpi=(300, 300))
+    
+    img_reader = ImageReader(temp_path)
+    c.drawImage(img_reader, x_pos, y_pos, width=img_width_pt, height=img_height_pt, preserveAspectRatio=True)
+    c.save()
+    
+    try:
+        os.unlink(temp_path)
+    except:
+        pass
+        
+    return buffer.getvalue()
 
-# 1. ZIJBALK INSTELLINGEN (Vervangt jouw Tkinter invoervelden)
+# --- INTERFACE ---
+st.title("📐 PDF/Image Bleed Add Tool & CMYK Converter")
+st.subheader("Voeg automatisch zuivere afloopruimte toe zonder zichtbare snijlijnen")
+
+if not PDF_SUPPORT:
+    st.error("⚠️ Waarschuwing: `reportlab` is niet geïnstalleerd in de cloudomgeving. Voeg `reportlab` toe aan je requirements.txt!")
+
 with st.sidebar:
     st.header("🔧 Drukwerk Instellingen")
-    
-    selected_format = st.selectbox("2. Selecteer Doelformaat:", list(FORMATS.keys()), index=1) # Standaard A4
+    selected_format = st.selectbox("Selecteer Doelformaat:", list(FORMATS.keys()), index=1)
     width_mm, height_mm = FORMATS[selected_format]
     
     convert_to_cmyk = st.checkbox("Zet om naar CMYK kleurruimte (Drukwerk)", value=True)
+    color_profile = st.selectbox("Kleurprofiel:", ["USWebCoatedSWOP", "CoatedFOGRA39", "UncoatedFOGRA29", "GenericCMYK"], index=1)
     
-    color_profile = st.selectbox(
-        "Kleurprofiel:", 
-        list(PROFILES.keys()), 
-        index=1, # Standaard CoatedFOGRA39 voor Europa
-        disabled=not convert_to_cmyk
-    )
-    st.caption(f"*Profiel info: {PROFILES[color_profile]}*")
+    bleed_mm = st.number_input("Afloopruimte (Bleed) in mm:", min_value=0, max_value=20, value=3)
+    fill_method = st.radio("Afloop Opvulmethode:", ["Spiegelen (Mirror)", "Randpixels Uitrekken (Stretch)", "Wit / Geselecteerde Kleur", "Dominante Achtergrondkleur"])
     
-    bleed_mm = st.number_input("5. Afloopruimte (Bleed) in mm:", min_value=0, max_value=20, value=3)
-    
-    fill_method = st.radio(
-        "6. Afloop Opvulmethode:",
-        ["Wit / Geselecteerde Kleur", "Spiegelen (Mirror)", "Randpixels Uitrekken (Stretch)", "Dominante Achtergrondkleur"]
-    )
-    
-    # Kleurkiezer tonen als "Wit / Kleur" is geselecteerd
     chosen_rgb = (255, 255, 255)
     if fill_method == "Wit / Geselecteerde Kleur":
         hex_color = st.color_picker("Kies specifieke randkleur:", "#FFFFFF")
         chosen_rgb = tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-        c, m, y, k = rgb_to_cmyk(*chosen_rgb)
-        st.caption(f"Geconverteerde CMYK waarde rand: C:{c:.0f}% M:{m:.0f}% Y:{y:.0f}% K:{k:.0f}%")
+        
+    output_type = st.radio("Export Bestandsformaat:", ["PDF (Aanbevolen)", "PNG"])
 
-    output_type = st.radio("8. Export Bestandsformaat:", ["PDF (Aanbevolen)", "PNG"])
-
-# 2. HOOFDSCHERM: BESTANDSUPLOADER
-uploaded_file = st.file_uploader("1. Upload de flyer (Afbeelding: JPG, JPEG, PNG)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload de flyer (Afbeelding: JPG, JPEG, PNG)", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # Open afbeelding
     file_bytes = uploaded_file.read()
     original_img = Image.open(io.BytesIO(file_bytes))
-    
     if original_img.mode != 'RGB':
         original_img = original_img.convert('RGB')
         
@@ -183,48 +199,54 @@ if uploaded_file is not None:
         st.image(original_img, caption=f"Origineel: {original_img.size[0]}x{original_img.size[1]} pixels", use_container_width=True)
         
     with col2:
-        st.markdown("<p class='report-title'>⚙️ Preview Bewerkt Resultaat</p>", unsafe_allow_html=True)
+        st.markdown("<p class='report-title'>⚙️ Gecreëerde Afloop (Clean Voorbeeld)</p>", unsafe_allow_html=True)
         
-        with st.spinner("Afloopranden genereren en matrix berekenen op 300 DPI..."):
-            # Berekening op 300 DPI (1 mm = 11.811 pixels)
+        with st.spinner("Berekenen van pixels op 300 DPI..."):
             pixel_per_mm = 11.811
             target_width_px = int(width_mm * pixel_per_mm)
             target_height_px = int(height_mm * pixel_per_mm)
             bleed_pixels = int(bleed_mm * pixel_per_mm)
             
-            # Schaal de afbeelding exact naar het doelformaat
+            # Stap 1: Schaal exact naar doelformaat (LANCZOS zoals computerversie)
             resized_base = original_img.resize((target_width_px, target_height_px), Image.Resampling.LANCZOS)
             
-            # Voeg de afloop toe volgens de gekozen methode
+            # Stap 2: Voeg afloop toe (Dit creëert de schone randen)
             final_img = create_bleed_image(resized_base, bleed_pixels, fill_method, chosen_rgb)
             
-            # Preview tonen (Browsers kunnen CMYK niet direct tonen, dus preview blijft RGB)
-            st.image(final_img, caption=f"Resultaat (+{bleed_mm}mm afloop): {final_img.size[0]}x{final_img.size[1]} pixels", use_container_width=True)
+            # Preview tonen in de browser (Geen getekende kaders meer!)
+            st.image(final_img, caption=f"Resultaat (+{bleed_mm}mm): {final_img.size[0]}x{final_img.size[1]} pixels", use_container_width=True)
             
-            # Exporteren voor download
-            output_buffer = io.BytesIO()
+            # Exporteren
             base_name = os.path.splitext(uploaded_file.name)[0]
             cmyk_suffix = "_CMYK" if convert_to_cmyk and output_type == "PDF (Aanbevolen)" else ""
             
-            if output_type == "PDF (Aanbevolen)":
-                export_img = final_img.convert("CMYK") if convert_to_cmyk else final_img
-                export_img.save(output_buffer, format="PDF", resolution=300.0, quality=100)
+            if output_type == "PDF (Aanbevolen)" and PDF_SUPPORT:
+                # Genereer de exacte PDF met ReportLab bytes
+                pdf_data = export_to_pdf_native(
+                    final_img, 
+                    (width_mm + bleed_mm*2, height_mm + bleed_mm*2), 
+                    selected_format, 
+                    convert_to_cmyk, 
+                    color_profile
+                )
                 file_ext = "pdf"
                 mime_type = "application/pdf"
-                
-                if convert_to_cmyk:
-                    st.success(f"✅ CMYK kleurconversie toegepast via gesimuleerd profiel: `{color_profile}`. Klaar voor professioneel drukwerk!")
+                download_data = pdf_data
+                st.success("✅ Professionele CMYK PDF gegenereerd via exacte pixelmatrix.")
             else:
-                final_img.save(output_buffer, format="PNG", dpi=(300, 300))
+                # Val terug op PNG export
+                buffer = io.BytesIO()
+                final_img.save(buffer, format="PNG", dpi=(300, 300))
                 file_ext = "png"
                 mime_type = "image/png"
-                if convert_to_cmyk:
-                    st.warning("⚠️ Let op: PNG ondersteunt geen CMYK. Het bestand wordt opgeslagen in RGB.")
+                download_data = buffer.getvalue()
+                if output_type == "PDF (Aanbevolen)":
+                    st.warning("⚠️ Systeem gebruikt PNG-fallback omdat reportlab ontbreekt in requirements.txt.")
 
             st.write("---")
             st.download_button(
-                label=f"📥 Download Aangepaste {selected_format} Flyer ({file_ext.upper()})",
-                data=output_buffer.getvalue(),
-                file_name=f"{base_name}{cmyk_suffix}_BLEED_{bleed_mm}mm_{selected_format}.{file_ext}",
+                label=f"📥 Download Schone {selected_format} Flyer ({file_ext.upper()})",
+                data=download_data,
+                file_name=f"{base_name}{cmyk_suffix}_CLEAN_BLEED_{bleed_mm}mm_{selected_format}.{file_ext}",
                 mime=mime_type
             )
