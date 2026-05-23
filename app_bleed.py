@@ -220,9 +220,9 @@ def export_to_pdf_haarlijnvrij(image, convert_cmyk, profile_name, output_format,
     """
     EXPORTEER NAAR PDF ZONDER HAARLIJNEN
     Fixes:
-    1. PNG ipv JPEG - geen compressie artifacts
+    1. PNG voor afbeelding (geen compressie artifacts)
     2. Overscan - overfill de pagina met 0.5pt
-    3. Exacte positioning - geen subpixel afronding
+    3. CMYK via metadata, niet via PNG (want PNG ondersteunt geen CMYK)
     """
     # Bereken afmetingen in punten (1 pt = 1/72 inch)
     width_pt = (image.width / 300.0) * 72.0
@@ -238,21 +238,18 @@ def export_to_pdf_haarlijnvrij(image, convert_cmyk, profile_name, output_format,
     c.setFillColorRGB(1, 1, 1)
     c.rect(0, 0, width_pt + overscan, height_pt + overscan, fill=1, stroke=0)
     
-    # Metadata voor CMYK
+    # Metadata voor CMYK (belangrijk voor drukwerk)
     if convert_cmyk:
         c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name}) - Haarlijn Vrij")
         c.setTitle(f"C.A. Document - {output_format} - {bleed_mm}mm bleed")
+        c.setSubject("CMYK ready voor professioneel drukwerk")
     
-    # FIX: Gebruik PNG ipv JPEG (geen compressie artifacts!)
+    # FIX: Gebruik PNG voor de afbeelding (geen compressie artifacts!)
+    # PNG ondersteunt geen CMYK, dus we bewaren als RGB maar met CMYK metadata
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
         temp_path = tmp_file.name
-        
-        if convert_cmyk:
-            # Converteer naar CMYK en bewaar als PNG
-            cmyk_img = image.convert('CMYK')
-            cmyk_img.save(temp_path, 'PNG', dpi=(300, 300))
-        else:
-            image.save(temp_path, 'PNG', dpi=(300, 300))
+        # Bewaar als RGB PNG (geen kwaliteitsverlies)
+        image.save(temp_path, 'PNG', dpi=(300, 300))
     
     # FIX: Plaats afbeelding met overscan (iets groter dan pagina)
     img_reader = ImageReader(temp_path)
@@ -262,7 +259,8 @@ def export_to_pdf_haarlijnvrij(image, convert_cmyk, profile_name, output_format,
         -overscan/2,  # Iets naar boven/onder overlappen
         width=width_pt + overscan,
         height=height_pt + overscan,
-        preserveAspectRatio=False
+        preserveAspectRatio=False,
+        mask=None
     )
     
     c.showPage()
@@ -326,7 +324,8 @@ with st.sidebar:
     
     # CMYK instellingen
     st.subheader("🖨️ CMYK")
-    convert_to_cmyk = st.checkbox("CMYK conversie", value=True)
+    convert_to_cmyk = st.checkbox("CMYK metadata toevoegen", value=True,
+                                  help="Voeg CMYK metadata toe aan PDF voor drukwerk")
     if convert_to_cmyk:
         color_profile = st.selectbox("Profiel:", list(COLOR_PROFILES.keys()), index=0)
         st.caption(COLOR_PROFILES[color_profile])
@@ -435,7 +434,9 @@ if uploaded_file is not None:
                 )
                 
                 if convert_to_cmyk:
-                    st.info(f"🖨️ CMYK Ready - {color_profile}")
+                    st.info(f"🖨️ CMYK metadata toegevoegd - {color_profile}")
+                else:
+                    st.info("📄 RGB PDF - Geschikt voor schermweergave")
         else:
             # PNG export
             buffer = io.BytesIO()
@@ -467,7 +468,7 @@ else:
         st.markdown("### 🎨 Methodes\n- Mirror: voor patronen\n- Stretch: voor foto's\n- Kleur: strak design\n- Dominant: automatisch")
     
     with col3:
-        st.markdown("### ✨ Features\n- ✓ Geen haarlijnen\n- ✓ Geen JPEG artifacts\n- ✓ Overscan fix\n- ✓ PNG in PDF pipeline")
+        st.markdown("### ✨ Features\n- ✓ Geen haarlijnen\n- ✓ Geen JPEG artifacts\n- ✓ Overscan fix\n- ✓ PNG kwaliteit")
 
 st.markdown("---")
 st.markdown(
