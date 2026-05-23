@@ -1,4 +1,5 @@
-streamlit
-pillow
-numpy
-reportlab
+streamlit>=1.28.0
+Pillow>=10.0.0
+numpy>=1.24.0
+reportlab>=4.0.0
+pdf2image>=1.16.0
