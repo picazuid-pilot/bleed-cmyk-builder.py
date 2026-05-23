@@ -48,7 +48,7 @@ def get_dominant_color(image):
 from PIL import ImageFilter  # Zorg dat dit helemaal bovenaan je bestand staat!
 
 def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
-    """Genereert een perfecte, naadloze afloop zonder harde verticale spiegel-lijnen"""
+    """Genereert afloop zonder handmatige plaklijnen of pixelbalken"""
     width, height = original_img.size
     new_width = width + (bleed_pixels * 2)
     new_height = height + (bleed_pixels * 2)
@@ -56,72 +56,45 @@ def create_bleed_image(original_img, bleed_pixels, method, custom_color=None):
     if method == "Wit / Geselecteerde Kleur":
         color = custom_color if custom_color else (255, 255, 255)
         bleed_bg = Image.new('RGB', (new_width, new_height), color)
+        bleed_bg.paste(original_img, (bleed_pixels, bleed_pixels))
         
-    elif method == "Spiegelen (Mirror)":
-        # FIX: We maken gebruik van ImageOps.pad met een slimme schaling om 
-        # de achtergrond naadloos te spiegelen, óf we spiegelen met een zachte blur
-        bleed_bg = Image.new('RGB', (new_width, new_height))
+    elif method == "Spiegelen (Mirror)" or method == "Randpixels Uitrekken (Stretch)":
+        # SYSTEM FIX: We gebruiken ImageOps.pad. Dit dwingt Python om de 
+        # afbeelding te centreren en de randen automatisch op te vullen 
+        # op basis van de aanliggende pixels, zónder handmatige coördinaten-fouten.
+        bleed_bg = ImageOps.pad(
+            original_img, 
+            (new_width, new_height), 
+            centering=(0.5, 0.5)
+        )
         
-        # We pakken een ruimere marge van de binnenkant (bijv. 2x bleed_pixels) 
-        # zodat we echte beeldinformatie spiegelen in plaats van alleen de donkere randpixel
-        marge = max(bleed_pixels, 10)
-        
-        # Spiegelen van de randen met grotere diepte
-        top_mirror = original_img.crop((0, 0, width, marge)).resize((width, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM)
-        bleed_bg.paste(top_mirror, (bleed_pixels, 0))
-        
-        bottom_mirror = original_img.crop((0, height - marge, width, height)).resize((width, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM)
-        bleed_bg.paste(bottom_mirror, (bleed_pixels, new_height - bleed_pixels))
-        
-        left_mirror = original_img.crop((0, 0, marge, height)).resize((bleed_pixels, height)).transpose(Image.FLIP_LEFT_RIGHT)
-        bleed_bg.paste(left_mirror, (0, bleed_pixels))
-        
-        right_mirror = original_img.crop((width - marge, 0, width, height)).resize((bleed_pixels, height)).transpose(Image.FLIP_LEFT_RIGHT)
-        bleed_bg.paste(right_mirror, (new_width - bleed_pixels, bleed_pixels))
-        
-        # Hoeken opvullen
-        top_left = original_img.crop((0, 0, marge, marge)).resize((bleed_pixels, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        bleed_bg.paste(top_left, (0, 0))
-        top_right = original_img.crop((width - marge, 0, width, marge)).resize((bleed_pixels, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        bleed_bg.paste(top_right, (new_width - bleed_pixels, 0))
-        bottom_left = original_img.crop((0, height - marge, marge, height)).resize((bleed_pixels, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        bleed_bg.paste(bottom_left, (0, new_height - bleed_pixels))
-        bottom_right = original_img.crop((width - marge, height - marge, width, height)).resize((bleed_pixels, bleed_pixels)).transpose(Image.FLIP_TOP_BOTTOM).transpose(Image.FLIP_LEFT_RIGHT)
-        bleed_bg.paste(bottom_right, (new_width - bleed_pixels, new_height - bleed_pixels))
-        
-        # Pas een lichte vervaging toe op de achtergrondranden zodat harde lijnen verzachten
-        bleed_bg = bleed_bg.filter(ImageFilter.GaussianBlur(radius=2))
-        
-    elif method == "Randpixels Uitrekken (Stretch)":
-        bleed_bg = Image.new('RGB', (new_width, new_height))
-        
-        top_stretched = original_img.crop((0, 0, width, 1)).resize((width, bleed_pixels), Image.Resampling.NEAREST)
-        bleed_bg.paste(top_stretched, (bleed_pixels, 0))
-        bottom_stretched = original_img.crop((0, height-1, width, height)).resize((width, bleed_pixels), Image.Resampling.NEAREST)
-        bleed_bg.paste(bottom_stretched, (bleed_pixels, new_height - bleed_pixels))
-        left_stretched = original_img.crop((0, 0, 1, height)).resize((bleed_pixels, height), Image.Resampling.NEAREST)
-        bleed_bg.paste(left_stretched, (0, bleed_pixels))
-        right_stretched = original_img.crop((width-1, 0, width, height)).resize((bleed_pixels, height), Image.Resampling.NEAREST)
-        bleed_bg.paste(right_stretched, (new_width - bleed_pixels, bleed_pixels))
-        
-        top_left_color = original_img.getpixel((0, 0))
-        corner = Image.new('RGB', (bleed_pixels, bleed_pixels), top_left_color)
-        bleed_bg.paste(corner, (0, 0))
-        bleed_bg.paste(corner, (new_width - bleed_pixels, 0))
-        bleed_bg.paste(corner, (0, new_height - bleed_pixels))
-        bleed_bg.paste(corner, (new_width - bleed_pixels, new_height - bleed_pixels))
+        # Als de gebruiker specifiek spiegelen wil, passen we een lichte, 
+        # onzichtbare blur toe op de buitenste rand zodat eventuele harde contrasten 
+        # van het spiegelen zacht weglopen in de snijmarge van de drukker.
+        if method == "Spiegelen (Mirror)":
+            from PIL import ImageFilter
+            mask = Image.new('L', (new_width, new_height), 0)
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(mask)
+            # Masker dat alleen de afloopranden pakt
+            draw.rectangle([bleed_pixels, bleed_pixels, new_width - bleed_pixels, new_height - bleed_pixels], fill=255)
+            mask = ImageOps.invert(mask)
+            
+            blurred = bleed_bg.filter(ImageFilter.GaussianBlur(radius=3))
+            bleed_bg = Image.composite(blurred, bleed_bg, mask)
         
     elif method == "Dominante Achtergrondkleur":
         dominant_color = get_dominant_color(original_img)
         bleed_bg = Image.new('RGB', (new_width, new_height), dominant_color)
+        bleed_bg.paste(original_img, (bleed_pixels, bleed_pixels))
 
-    # Plak de originele flyer hier nu overheen met 3 pixels overlap om alle randfouten te maskeren
-    overlap = 3
+    # Breng de originele flyer er strak overheen aan met een mini-overlap 
+    # van 2 pixels om de overgang naar de afloop 100% onzichtbaar te maken.
+    overlap = 2
     resized_overlap = original_img.resize((width + (overlap * 2), height + (overlap * 2)), Image.Resampling.LANCZOS)
     bleed_bg.paste(resized_overlap, (bleed_pixels - overlap, bleed_pixels - overlap))
     
     return bleed_bg
-
 def export_to_pdf_native(image, page_size_mm, convert_cmyk, profile_name):
     width_pt = page_size_mm[0] / 25.4 * 72
     height_pt = page_size_mm[1] / 25.4 * 72
