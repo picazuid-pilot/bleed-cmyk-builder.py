@@ -131,9 +131,11 @@ def export_to_pdf_native(image, page_size_mm, convert_cmyk, profile_name):
     x_pos = (width_pt - img_width_pt) / 2
     y_pos = (height_pt - img_height_pt) / 2
     
-    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+    # Pas de suffix aan naar .jpg omdat JPEG wél CMYK ondersteunt (PNG niet!)
+    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
         temp_path = tmp_file.name
-        image.save(temp_path, 'PNG', dpi=(300, 300))
+        # Sla op als JPEG met maximale kwaliteit om compressieverlies te voorkomen
+        image.save(temp_path, 'JPEG', quality=100, dpi=(300, 300))
     
     img_reader = ImageReader(temp_path)
     c.drawImage(img_reader, x_pos, y_pos, width=img_width_pt, height=img_height_pt, preserveAspectRatio=True)
